@@ -40,7 +40,7 @@ def read_text(root: Path, rel: str) -> str | None:
     p = Path(root) / rel.lstrip("/")
     try:
         return p.read_text(errors="replace").strip("\x00").strip()
-    except (OSError, UnicodeDecodeError):
+    except (OSError, UnicodeDecodeError, TypeError):
         return None
 
 
@@ -93,8 +93,8 @@ def _parse_link_line(line: str) -> dict[str, Any]:
         "gen": _GEN_BY_GTS.get(gts) if gts is not None else None,
     }
 
-def generate_interpretation_string(neg_speed, cap_speed):
-    if cap_speed > neg_speed:
+def generate_interpretation_string(negotiated, capability):
+    if capability['gen'] > negotiated['gen']:
         interpretation = (
             f"drive capable of Gen{capability['gen']}, link running at "
             f"Gen{negotiated['gen']} — expected on this carrier board, "
@@ -143,7 +143,18 @@ def probe_memory_total_kb(root: Path = Path("/")) -> dict[str, Any]:
     ever sees the pool. Students are expected to notice and to explain it in
     their report rather than round it up.
     """
-    
+    src = "/proc/meminfo"
+
+    text = read_text(root, src)
+
+    if text is None:
+        return unknown(src, "meminfo not here")
+
+    m = re.search(r"^MemTotal:\s+(\d+)\s*kB", text, re.M)
+
+    if m is None:
+        return unknown(src, "MemTotal not here")
+
     return {"value": int(m.group(1)), "source": src, "status": "ok"}
 
 
@@ -159,7 +170,30 @@ def probe_root_source(root: Path = Path("/")) -> dict[str, Any]:
     /proc/mounts is preferred over `findmnt` because it needs no external
     binary and no elevation, and because it is what findmnt reads anyway.
     """
-    
+    src = "/proc/mounts"
+
+    text = read_text(root, src)
+
+    if text is None:
+        return unknown(src, "mounts not here")
+
+    for line in text.splitlines():
+        words = line.split()
+
+        if len(words) < 2 or words[1] != "/":
+            continue
+
+        dev = words[0]
+
+        if dev.startswith("/dev/nvme"):
+            typed = "nvme"
+        elif dev.startswith("/dev/mmcblk") or dev.startswith("/dev/sd"):
+            typed = "ssd"
+        else:
+            typed = "other"
+
+        return {"value": dev, "kind": typed, "source": src, "status": "ok"}
+
     return unknown(src, "no root mount entry found in mount table")
 
 
@@ -172,10 +206,19 @@ def probe_nvme_present(root: Path = Path("/")) -> dict[str, Any]:
     the right branch.
     """
     
+    src = "/sys/block/nvme0n1"
+
+    present = (Path(root) / src.lstrip("/")).is_dir()
+
+    model = read_text(root, f"{src}/device/model") if present else None
+
+    if model is not None:
+        model = " ".join(re.split(r"\s+", model)).strip()
+
     return {
-        "value": ,
-        "model": ,
-        "source": ,
+        "value": present,
+        "model": model,
+        "source": src,
         "status": "ok",
     }
 
@@ -192,13 +235,36 @@ def probe_pcie_link(root: Path = Path("/"), lspci_output: str | None = None) -> 
     In normal use it is None and the probe shells out.
     """
         
+    src = "lspci -vv"
+
+    text = lspci_output if lspci_output is not None else run(["lspci", "-vv"])
+
+    if not text:
+        return unknown(src, "lspci output not here")
+
+    sta = re.search(r".*LnkSta:.*", text)
+
+    cap = re.search(r".*LnkCap:.*", text)
+
+    if sta is None:
+        return unknown(src, "LnkSta not here")
+
+    negotiated = _parse_link_line(sta.group(0))
+
+    capability = _parse_link_line(cap.group(0)) if cap else None
+
+    message = None
+
+    if capability and negotiated["gen"] and capability["gen"]:
+        message = generate_interpretation_string(negotiated, capability)
+
     return {
-        "value":,
-        "negotiated": ,
-        "capability": ,
-        "interpretation": ,
-        "source": ,
+        "value": negotiated["raw"],
+        "negotiated": negotiated,
+        "capability": capability,
+        "source": src,
         "status": "ok",
+        "interpretation": message,
     }
 
 
@@ -210,10 +276,34 @@ def probe_thermal_zones(root: Path = Path("/")) -> dict[str, Any]:
     than once, and it is a good, cheap lesson in reading units before reading
     numbers.
     """
+    src = "/sys/class/thermal/thermal_zone*/temp"
+
+    base = Path(root) / "sys/class/thermal"
+
+    if not base.is_dir():
+        return unknown(src, "thermal dir not here")
+
+    zones = []
+
+    for zone in sorted(base.glob("thermal_zone*")):
+        filename = f"sys/class/thermal/{zone.name}"
+
+        milli = read_text(root, f"{filename}/temp")
+
+        if milli is None:
+            continue
+
+        typed = read_text(root, f"{filename}/type")
+
+        zones.append({"zone": zone.name, "type": typed, "temp_c": int(milli) / 1000})
+
+    if not zones:
+        return unknown(src, "no zones readable")
+
     return {
-        "value": ,
-        "zones": ,
-        "source": ,
+        "value": max(z["temp_c"] for z in zones),
+        "zones": zones,
+        "source": src,
         "status": "ok",
     }
 
@@ -226,10 +316,24 @@ def probe_power_mode(root: Path = Path("/"), nvpmodel_output: str | None = None)
     same model are usually reporting different power modes, and without this
     field there is no way to find that out after the fact.
     """
+    src = "nvpmodel -q"
+
+    text = nvpmodel_output if nvpmodel_output is not None else run(["nvpmodel", "-q"])
+
+    if not text:
+        return unknown(src, "nvpmodel output not here")
+
+    name = re.search(r"NV Power Mode:\s*(.+)", text)
+
+    mode = re.search(r"^\s*(\d+)\s*$", text, re.M)
+
+    if name is None:
+        return unknown(src, "NV Power Mode not here")
+
     return {
-        "value": ,
-        "mode_id": ,
-        "source": ,
+        "value": name.group(1).strip(),
+        "mode_id": int(mode.group(1)) if mode else None,
+        "source": src,
         "status": "ok",
     }
 
