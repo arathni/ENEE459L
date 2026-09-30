@@ -1,0 +1,66 @@
+{
+    "warmup_boundary": {
+        "value": 1,
+        "source": "leading prefix above (1 + 0.5) x median of the run's second half",
+        "status": "ok",
+        "settled_rate_ms": 18.646213,
+        "threshold_ms": 27.969319499999997,
+        "tolerance": 0.5,
+        "retained": 99
+    },
+    "summarize_setup": {
+        "n": 100,
+        "mean": 22.953,
+        "std": 42.6186,
+        "min": 18.5059,
+        "max": 444.875,
+        "p50": 18.6693,
+        "p95": 18.8978,
+        "p99": 24.0804
+    },
+    "is_multimodal": {
+        "value": false,
+        "source": "widest trimmed gap >= 20.0x the median gap, with >= 10% of samples on each side",
+        "status": "ok",
+        "gap_ratio": 14.71,
+        "widest_gap_ms": 0.032,
+        "typical_gap_ms": 0.00218,
+        "modes": [
+            {
+                "n": 93,
+                "share": 0.93,
+                "median_ms": 18.6616
+            },
+            {
+                "n": 7,
+                "share": 0.07,
+                "median_ms": 18.9128
+            }
+        ]
+    },
+    "probe_power_state": {
+        "value": "25W",
+        "source": "nvpmodel -q",
+        "status": "ok",
+        "mode_index": 1,
+        "jetson_clocks": false
+    },
+    "probe_telemetry": {
+        "temperature_c": {
+            "value": 52.343,
+            "source": "sys/devices/virtual/thermal/*/temp",
+            "status": "ok"
+        },
+        "power_mw": {
+            "value": null,
+            "source": "sys/bus/i2c/drivers/ina3221/1-0040/hwmon/hwmon3/in1_input | sys/bus/i2c/drivers/ina3221/1-0040/iio:device0/in_power0_input | sys/bus/i2c/drivers/ina3221x/1-0040/iio:device0/in_power0_input",
+            "status": "unknown",
+            "detail": "none of the documented INA3221 rail paths could be read"
+        },
+        "gpu_utilization_percent": {
+            "value": 21.7,
+            "source": "sys/devices/platform/gpu.0/load",
+            "status": "ok"
+        }
+    }
+}
