@@ -7,6 +7,7 @@ from schema import BLACK_MAX, FLAT_SPREAD
 import cv2
 import time
 import json
+import math
 import numpy as np
 from pathlib import Path
 
@@ -114,37 +115,104 @@ def grab_frame(pipeline: str, warmup_frames: int = 15) -> np.ndarray:
 ############################
 
 def frame_bytes(width: int, height: int, fmt: str) -> int:
-    pass
+    if type(width) is not int or type(height) is not int:
+        raise FrameError()
+    if width <= 0 or height <= 0:
+        raise FrameError()
+
+    bpp = _bytes_per_pixel(fmt.lower())
+    total = width * height * bpp
+    return math.ceil(total)
 
 
 def bytes_per_second(width: int, height: int, fmt: str, fps: float) -> float:
-    pass
+    if fps <= 0:
+        raise FrameError()
+    return frame_bytes(width, height, fmt) * float(fps)
 
 
 def frame_stats(pixels: Sequence[float] | Iterable[float]) -> dict[str, float]:
-    pass
+    values = []
+    for v in pixels:
+        values.append(float(v))
+    if not values:
+        raise FrameError()
+
+    vmin = min(values)
+    vmax = max(values)
+    N = len(values)
+    mean = sum(values) / N
+
+    variance = 0.0
+    for v in values:
+        variance += (v - mean) ** 2
+    variance = variance / N
+    sd = math.sqrt(variance)
+    spread = vmax - vmin
+
+    return {
+        "min": vmin,
+        "max": vmax,
+        "mean": mean,
+        "spread": spread,
+        "sd": sd,
+        "samples": float(N),
+    }
 
 
 def classify(stats: dict[str, float]) -> tuple[str, str]:
-    pass
+    for key in ("max", "spread", "mean"):
+        if key not in stats:
+            raise FrameError()
+
+    if stats["max"] <= BLACK_MAX:
+        return "black", "The sensor is registering zero photon response (e.g., lens cap attached)."
+    if stats["spread"] < FLAT_SPREAD:
+        return "flat", "Contrast is absent across all pixels (e.g., disconnected or washed-out sensor)."
+    if stats["mean"] < 0.10:
+        return "dark", "Structure exists, but exposure is insufficient."
+    return "scene", f"mean {stats['mean']:.4f}, spread {stats['spread']:.4f}. Exposed and structured."
 
 
 def conversion_bytes(width: int, height: int, src: str, dst: str) -> int:
-    pass
+    if src.lower() == dst.lower():
+        return 0
+    Bytes_read = frame_bytes(width, height, src)
+    Bytes_write = frame_bytes(width, height, dst)
+    return Bytes_read + Bytes_write
 
 
 def resize_bytes(src_w: int, src_h: int, dst_w: int, dst_h: int,
                  fmt: str) -> int:
-    pass
+    return frame_bytes(src_w, src_h, fmt) + frame_bytes(dst_w, dst_h, fmt)
 
 
 def normalise_bytes(width: int, height: int, channels: int = 3,
                     out_bytes: int = 4) -> int:
-    pass
+    if width <= 0 or height <= 0 or channels <= 0:
+        raise FrameError()
+    P = width * height * channels
+    Bytes_in = P * 1
+    Bytes_out = P * out_bytes
+    return Bytes_in + Bytes_out
 
 
 def summarise_formats(width: int, height: int) -> list[dict[str, Any]]:
-    pass
+    base = frame_bytes(width, height, "rgb")
+    rows = []
+    for fmt in FORMATS:
+        N = frame_bytes(width, height, fmt)
+        bpp = _bytes_per_pixel(fmt)
+        ratio = N / base
+        note = FORMAT_NOTES[fmt]
+        rows.append({
+            "format": fmt,
+            "bytes_per_pixel": bpp,
+            "bytes": N,
+            "relative_to_rgb": ratio,
+            "note": note,
+        })
+    return rows
 
 
 ###############################
