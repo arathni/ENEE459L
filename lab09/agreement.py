@@ -82,30 +82,174 @@ def _percentile(xs: Sequence[float], q: float) -> float:
 
 
 def latency_report(ms: Iterable[float]) -> dict[str, Any]:
-    pass
+    ms = list(ms)
+    for i in range(len(ms)):
+        ms[i] = _finite(ms[i], "value")
+        if ms[i] < 0:
+            raise AgreementError()
+    if not ms:
+        raise AgreementError()
+
+    n = len(ms)
+    report = {
+        "n": n,
+        "mean": sum(ms) / n,
+        "worst": max(ms),
+    }
+    for q in LATENCY_PERCENTILES:
+        report[f"p{q}"] = _percentile(ms, q)
+    report["jitter"] = report["p95"] - report["p50"]
+    return report
 
 
 def speedup(base_ms: float, other_ms: float) -> dict[str, Any]:
-    pass
+    base_ms = _finite(base_ms, "base_ms")
+    other_ms = _finite(other_ms, "other_ms")
+    if base_ms <= 0 or other_ms <= 0:
+        raise AgreementError()
+
+    factor = base_ms / other_ms
+    if factor > 1.0:
+        faster = True
+    else:
+        faster = False
+    saved_ms = base_ms - other_ms
+    return {"factor": factor, "faster": faster, "saved_ms": saved_ms}
 
 
 def max_abs_dev(a: Sequence[float], b: Sequence[float]) -> dict[str, Any]:
-    pass
+    a = list(a)
+    b = list(b)
+    for i in range(len(a)):
+        a[i] = _finite(a[i], "a")
+    for i in range(len(b)):
+        b[i] = _finite(b[i], "b")
+    if not a or not b or len(a) != len(b):
+        raise AgreementError()
+
+    n = len(a)
+    best_i = 0
+    best = abs(a[0] - b[0])
+    for i in range(1, n):
+        difference = abs(a[i] - b[i])
+        if difference > best:
+            best = difference
+            best_i = i
+
+    return {
+        "max_abs": best,
+        "index": best_i,
+        "a": a[best_i],
+        "b": b[best_i],
+        "n": n,
+    }
 
 
 def max_rel_dev(a: Sequence[float], b: Sequence[float],
                 floor: float = REL_FLOOR) -> dict[str, Any]:
-    pass
+    a = list(a)
+    b = list(b)
+    for i in range(len(a)):
+        a[i] = _finite(a[i], "a")
+    for i in range(len(b)):
+        b[i] = _finite(b[i], "b")
+    if not a or not b or len(a) != len(b):
+        raise AgreementError()
+    floor = _finite(floor, "floor")
+    if floor <= 0:
+        raise AgreementError()
+
+    n = len(a)
+    floored = 0
+    denom_min = abs(b[0])
+    best = 0.0
+    best_i = 0
+    for i in range(n):
+        d = abs(b[i])
+        denom_min = min(denom_min, d)
+        if d < floor:
+            floored += 1
+        r = abs(a[i] - b[i]) / max(d, floor)
+        if r > best:
+            best = r
+            best_i = i
+
+    return {
+        "max_rel": best,
+        "index": best_i,
+        "floored": floored,
+        "denom_min": denom_min,
+        "n": n,
+    }
 
 
 def top1_agreement(rows_a: Sequence[Sequence[float]],
                    rows_b: Sequence[Sequence[float]]) -> dict[str, Any]:
-    pass
+    if not rows_a or not rows_b or len(rows_a) != len(rows_b):
+        raise AgreementError()
+
+    N = len(rows_a)
+    agree = 0
+    first_disagreement = None
+    for k in range(N):
+        u = []
+        v = []
+        for value in rows_a[k]:
+            u.append(_finite(value, "rows_a"))
+        for value in rows_b[k]:
+            v.append(_finite(value, "rows_b"))
+        if not u or not v or len(u) != len(v):
+            raise AgreementError()
+
+        ia = u.index(max(u))
+        ib = v.index(max(v))
+        if ia == ib:
+            agree += 1
+        elif first_disagreement is None:
+            first_disagreement = k
+
+    return {
+        "n": N,
+        "agree": agree,
+        "disagree": N - agree,
+        "rate": agree / N,
+        "first_disagreement": first_disagreement,
+    }
 
 
 def decision_margin(rows: Sequence[Sequence[float]],
                     tol: float) -> dict[str, Any]:
-    pass
+    if not rows:
+        raise AgreementError()
+    tol = _finite(tol, "tol")
+    if tol < 0:
+        raise AgreementError()
+
+    m = []
+    for row in rows:
+        r = []
+        for value in row:
+            r.append(_finite(value, "row"))
+        if len(r) < 2:
+            raise AgreementError()
+        s = sorted(r, reverse=True)
+        m.append(s[0] - s[1])
+
+    argmin = m.index(min(m))
+    below_tol = 0
+    for k in range(len(m)):
+        if m[k] < tol:
+            below_tol += 1
+
+    return {
+        "n": len(m),
+        "min": min(m),
+        "median": _percentile(m, 50),
+        "mean": sum(m) / len(m),
+        "argmin": argmin,
+        "below_tol": below_tol,
+        "safe": below_tol == 0,
+    }
 
 #############################################################
 ###############  Main function starts here ##################
